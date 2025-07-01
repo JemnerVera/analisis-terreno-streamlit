@@ -17,7 +17,7 @@ import plotly.express as px
 from io import StringIO
 from matplotlib.colors import ListedColormap, BoundaryNorm
 
-st.set_page_config(page_title="Análisis de Terreno", layout="centered")
+st.set_page_config(page_title="App Topografica de Terreno - Agrícola Andrea", layout="centered")
 st.title("🌍 Análisis de Terreno y Perfiles")
 st.markdown("Sube uno o más archivos `.kml`, `.gpx` o `.geojson` para generar mapas topográficos, analizar perfiles o estimar movimiento de tierra.")
 
