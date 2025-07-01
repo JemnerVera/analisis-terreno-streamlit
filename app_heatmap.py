@@ -124,7 +124,8 @@ def crear_mascara_validez(grid_z):
     return gaussian_filter(mask.astype(float), sigma=2) > 0.1
 
 if uploaded_files:
-    # 🗺️ GENERAR MAPA TOPOGRÁFICO
+    
+       # 🗺️ GENERAR MAPA TOPOGRÁFICO
     if modo == "🗺️ Generar mapa topográfico":
         archivo = uploaded_files[0]
         nombre_archivo = os.path.splitext(archivo.name)[0]
@@ -182,13 +183,31 @@ if uploaded_files:
                                   levels=num_curvas, colors='black', linewidths=0.8, alpha=0.8)
             ax.clabel(contours, inline=True, fontsize=8, fmt="%.0f")
 
+        # 🧭 Flecha al norte
+        ax.annotate('N', xy=(0.95, 0.85), xytext=(0.95, 0.75),
+                    arrowprops=dict(facecolor='black', width=3, headwidth=10),
+                    ha='center', va='center', fontsize=10, xycoords='axes fraction')
+
+        # 📏 Escala gráfica (100 m aprox)
+        escala_m = 100
+        escala_px = escala_m / 111320 * grid_res
+        x0 = min(x) + 0.05 * (max(x) - min(x))
+        y0 = min(y) + 0.05 * (max(y) - min(y))
+        ax.plot([x0, x0 + escala_px], [y0, y0], color='black', lw=3)
+        ax.text(x0 + escala_px / 2, y0 - 0.001, f'{escala_m:.0f} m', ha='center', va='top', fontsize=8)
+
+        # 🗂️ Leyenda textual
+        ax.text(0.01, 0.99, "Altitud interpolada\nCurvas de nivel", transform=ax.transAxes,
+                fontsize=8, verticalalignment='top', bbox=dict(boxstyle="round", facecolor="white", alpha=0.6))
+
         plt.colorbar(heatmap, ax=ax, label="Altitud (m)")
         ax.set_title("Mapa Topográfico Interpolado")
         ax.set_xlabel("Longitud (°)")
         ax.set_ylabel("Latitud (°)")
         ax.grid(True, linestyle='--', alpha=0.5)
-        st.pyplot(fig)
 
+        st.pyplot(fig)
+        
     # 📈 ANALIZAR PERFILES
     elif modo == "📈 Analizar perfiles":
         fig = go.Figure()
