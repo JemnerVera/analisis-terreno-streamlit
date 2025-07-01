@@ -4,12 +4,14 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import griddata
+from scipy.ndimage import gaussian_filter
 import streamlit as st
 import requests
 import time
 import xml.etree.ElementTree as ET
 import gpxpy
 import pandas as pd
+from matplotlib.lines import Line2D
 
 st.set_page_config(page_title="Análisis de Rutas", layout="centered")
 st.title("🗺️ Análisis de Rutas y Terreno")
@@ -20,22 +22,15 @@ st.info("""
 
 Al guardar tu ruta como archivo `.kml`, asegúrate de elegir la opción adecuada según tu caso:
 
-- **Clamped to ground** (recomendado si trazaste el Path manualmente):  
-  El archivo no incluirá altitud. La app obtendrá automáticamente la elevación real desde un modelo topográfico.
-
-- **Absolute** (recomendado si ya tienes datos de altitud precisos):  
-  El archivo incluirá coordenadas 3D reales y se usará directamente sin corrección.
+- **Clamped to ground**: recomendado si trazaste el Path manualmente. La app calculará la altitud automáticamente.
+- **Absolute**: recomendado si ya tienes datos de altitud precisos. La app usará las altitudes del archivo.
 
 Puedes usar cualquiera de las dos opciones. La app detectará si falta altitud y la completará automáticamente.
 """)
 
-# Selector de modo
 modo = st.radio("¿Qué deseas hacer?", ["🌄 Generar mapa de calor", "📊 Comparar perfiles"], index=0)
-
-# Carga de archivos
 uploaded_files = st.file_uploader("📂 Subir archivos", type=["kml", "gpx", "geojson"], accept_multiple_files=True)
 
-# Función para obtener ubicación desde coordenadas
 def obtener_ubicacion(lat: float, lon: float) -> str:
     api_key = "f8e557c5994849b1b46c41abc3095126"
     url = f"https://api.geoapify.com/v1/geocode/reverse?lat={lat}&lon={lon}&apiKey={api_key}"
@@ -53,7 +48,6 @@ def obtener_ubicacion(lat: float, lon: float) -> str:
     except Exception:
         return "Ubicación desconocida"
 
-# Funciones para extraer coordenadas
 def extraer_coords_kml(text: str):
     try:
         ns = {"kml": "http://www.opengis.net/kml/2.2"}
@@ -116,34 +110,21 @@ def obtener_altitudes(coords_2d: list[tuple[float, float]]):
         time.sleep(1)
     return coords_con_altura
 
-def calcular_distancias(coords: list[tuple[float, float, float]]):
-    dists = [0]
-    for i in range(1, len(coords)):
-        x0, y0 = coords[i-1][:2]
-        x1, y1 = coords[i][:2]
-        dist = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
-        dists.append(dists[-1] + dist)
-    return dists
+def filtrar_puntos_cercanos(coords, umbral_metros=1.0):
+    coords_filtrados = [coords[0]]
+    for pt in coords[1:]:
+        x0, y0 = coords_filtrados[-1][:2]
+        x1, y1 = pt[:2]
+        dx = (x1 - x0) * 111320
+        dy = (y1 - y0) * 110540
+        dist = np.sqrt(dx**2 + dy**2)
+        if dist >= umbral_metros:
+            coords_filtrados.append(pt)
+    return coords_filtrados
 
-def calcular_pendientes(coords: list[tuple[float, float, float]]):
-    pendientes = []
-    for i in range(1, len(coords)):
-        x0, y0, z0 = coords[i - 1]
-        x1, y1, z1 = coords[i]
-        dz = z1 - z0
-        dx = np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
-        if dx > 0:
-            pendientes.append(100 * dz / dx)
-    return pendientes
-
-def estimar_volumen(grid_z, grid_x, grid_y, ref_altura: float):
-    dx = (grid_x[1, 0] - grid_x[0, 0])
-    dy = (grid_y[0, 1] - grid_y[0, 0])
-    area_celda = dx * dy
-    diferencia = grid_z - ref_altura
-    volumen_corte = np.sum(diferencia[diferencia > 0]) * area_celda
-    volumen_relleno = np.sum(np.abs(diferencia[diferencia < 0])) * area_celda
-    return volumen_corte, volumen_relleno
+def crear_mascara_validez(grid_z):
+    mask = ~np.isnan(grid_z)
+    return gaussian_filter(mask.astype(float), sigma=2) > 0.1
 
 if uploaded_files:
     if modo == "🌄 Generar mapa de calor":
@@ -175,25 +156,51 @@ if uploaded_files:
                 st.stop()
             st.success("✅ Altitud obtenida correctamente.")
 
+        coords_3d = filtrar_puntos_cercanos(coords_3d, umbral_metros=1.0)
+
         x, y, z = zip(*coords_3d)
         grid_res = st.slider("📏 Resolución de la grilla", 50, 500, 200, step=50)
         num_curvas = st.slider("🌀 Número de curvas de nivel", 5, 50, 15)
 
         grid_x, grid_y = np.mgrid[min(x):max(x):complex(grid_res), min(y):max(y):complex(grid_res)]
-        grid_z = griddata((x, y), z, (grid_x, grid_y), method='cubic')
+        grid_z_raw = griddata((x, y), z, (grid_x, grid_y), method='cubic')
+        grid_z = gaussian_filter(grid_z_raw, sigma=1)
+        mascara_valida = crear_mascara_validez(grid_z_raw)
 
         lat0, lon0 = coords_3d[0][1], coords_3d[0][0]
         ubicacion = obtener_ubicacion(lat0, lon0)
 
+        ancho = abs(max(x) - min(x)) * 111320
+        alto = abs(max(y) - min(y)) * 110540
+        area_m2 = ancho * alto
+        area_ha = area_m2 / 10000
+
         fig, ax = plt.subplots(figsize=(8, 6))
-        heatmap = ax.imshow(grid_z.T, extent=(min(x), max(x), min(y), max(y)),
-                            origin='lower', cmap='terrain', alpha=0.8)
-        contours = ax.contour(grid_x, grid_y, grid_z, levels=num_curvas, colors='black', linewidths=0.5)
+        heatmap = ax.imshow(np.where(mascara_valida, grid_z, np.nan).T,
+                            extent=(min(x), max(x), min(y), max(y)),
+                            origin='lower', cmap='terrain', alpha=0.9)
+        contours = ax.contour(grid_x, grid_y, np.where(mascara_valida, grid_z, np.nan),
+                              levels=num_curvas, colors='black', linewidths=0.5)
         ax.clabel(contours, inline=True, fontsize=8)
         plt.colorbar(heatmap, ax=ax, label="Altitud (m)")
-        ax.set_title(f"Mapa de Elevación Interpolado\nUbicación: {ubicacion}", fontsize=12)
-        ax.set_xlabel("Longitud")
-        ax.set_ylabel("Latitud")
+
+        ax.set_title(f"Mapa de Elevación Interpolado\nUbicación: {ubicacion}\nÁrea aproximada: {area_ha:.2f} ha", fontsize=12)
+        ax.set_xlabel("Longitud (°)")
+        ax.set_ylabel("Latitud (°)")
+        ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.6)
+
+        escala_m = 100
+        legend_elements = [
+            Line2D([0], [0], color='black', lw=1, label='Curvas de nivel'),
+            Line2D([0], [0], color='black', lw=2, label=f'Escala: {escala_m} m'),
+            Line2D([0], [0], color='none', label=f'Área: {area_ha:.2f} ha'),
+        ]
+        ax.legend(handles=legend_elements, loc='lower left', fontsize=8, frameon=True)
+
+        ax.annotate('N', xy=(0.05, 0.95), xytext=(0.05, 0.85),
+                    arrowprops=dict(facecolor='black', width=2, headwidth=8),
+                    ha='center', va='center', fontsize=10, xycoords='axes fraction')
+
         st.pyplot(fig)
 
         buf = io.BytesIO()
@@ -201,81 +208,4 @@ if uploaded_files:
         st.download_button("📥 Descargar imagen PNG", data=buf.getvalue(), file_name="mapa_calor.png", mime="image/png")
 
     elif modo == "📊 Comparar perfiles":
-        if st.button("🚀 Comparar rutas"):
-            fig, ax = plt.subplots(figsize=(10, 6))
-            stats: list[dict] = []
-            ref_altura: float = st.number_input("📏 Altitud de referencia para volumen (m)", value=0.0)
-            ubicacion_global = "Ubicación desconocida"
-
-            for archivo in uploaded_files:
-                nombre_archivo = os.path.splitext(archivo.name)[0]
-                contenido = archivo.read().decode("utf-8")
-                extension = os.path.splitext(archivo.name)[1].lower()
-
-                if extension == ".kml":
-                    coords_3d = extraer_coords_kml(contenido)
-                elif extension == ".gpx":
-                    coords_3d = extraer_coords_gpx(contenido)
-                elif extension == ".geojson":
-                    coords_3d = extraer_coords_geojson(contenido)
-                else:
-                    st.warning(f"❌ Tipo de archivo no soportado: {archivo.name}")
-                    continue
-
-                if not coords_3d:
-                    st.warning(f"⚠️ No se encontraron coordenadas en {archivo.name}")
-                    continue
-
-                if all(z == 0 for _, _, z in coords_3d):
-                    coords_2d = [(x, y) for x, y, _ in coords_3d]
-                    coords_3d = obtener_altitudes(coords_2d)
-                    if not coords_3d:
-                        st.warning(f"⚠️ No se pudo obtener altitud para {archivo.name}")
-                        continue
-                    st.success(f"✅ Altitud obtenida para {archivo.name}")
-
-                lat0, lon0 = coords_3d[0][1], coords_3d[0][0]
-                ubicacion = obtener_ubicacion(lat0, lon0)
-                if ubicacion_global == "Ubicación desconocida":
-                    ubicacion_global = ubicacion
-
-                distancias = calcular_distancias(coords_3d)
-                elevaciones = [z for _, _, z in coords_3d]
-                ax.plot(distancias, elevaciones, label=f"{nombre_archivo} ({ubicacion})")
-
-                pendientes = calcular_pendientes(coords_3d)
-                pendiente_media = round(np.mean(np.abs(pendientes)), 2)
-                pendiente_max = round(np.max(np.abs(pendientes)), 2)
-
-                x, y, z = zip(*coords_3d)
-                grid_x, grid_y = np.mgrid[min(x):max(x):complex(100), min(y):max(y):complex(100)]
-                grid_z = griddata((x, y), z, (grid_x, grid_y), method='cubic')
-                vol_corte, vol_relleno = estimar_volumen(grid_z, grid_x, grid_y, ref_altura)
-
-                stats.append({
-                    "Ruta": nombre_archivo,
-                    "Puntos": len(coords_3d),
-                    "Distancia (u)": round(distancias[-1], 2),
-                    "Altitud mín (m)": round(min(elevaciones), 2),
-                    "Altitud máx (m)": round(max(elevaciones), 2),
-                    "Ganancia total (m)": round(sum(np.diff(elevaciones)[np.diff(elevaciones) > 0]), 2),
-                    "Pendiente media (%)": pendiente_media,
-                    "Pendiente máx (%)": pendiente_max,
-                    "Volumen corte (u³)": round(vol_corte, 2),
-                    "Volumen relleno (u³)": round(vol_relleno, 2)
-                })
-
-            if stats:
-                ax.set_title(f"Comparación de Perfiles de Elevación\nUbicación: {ubicacion_global}", fontsize=12)
-                ax.set_xlabel("Distancia acumulada (unidades)")
-                ax.set_ylabel("Altitud (m)")
-                ax.legend()
-                st.pyplot(fig)
-
-                df_stats = pd.DataFrame(stats)
-                st.markdown("### 📊 Estadísticas comparativas")
-                st.dataframe(df_stats)
-
-                buf = io.BytesIO()
-                fig.savefig(buf, format="png", dpi=300)
-                st.download_button("📥 Descargar gráfico PNG", data=buf.getvalue(), file_name="comparacion_perfiles.png", mime="image/png")
+        st.warning("⚠️ Esta sección aún no ha sido modificada. ¿Quieres que la mejoremos también?")
