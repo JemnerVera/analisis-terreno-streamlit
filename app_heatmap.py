@@ -167,6 +167,12 @@ if uploaded_files:
         grid_z = gaussian_filter(grid_z_raw, sigma=1)
         mascara_valida = crear_mascara_validez(grid_z_raw)
 
+        # Calcular pendiente local y umbral dinámico
+        grad_y, grad_x = np.gradient(grid_z)
+        pendiente = np.sqrt(grad_x**2 + grad_y**2)
+        umbral_dinamico = max(np.percentile(pendiente[mascara_valida], 60), 0.00005)
+        mascara_pendiente = pendiente > umbral_dinamico
+
         lat0, lon0 = coords_3d[0][1], coords_3d[0][0]
         ubicacion = obtener_ubicacion(lat0, lon0)
 
@@ -179,22 +185,33 @@ if uploaded_files:
         heatmap = ax.imshow(np.where(mascara_valida, grid_z, np.nan).T,
                             extent=(min(x), max(x), min(y), max(y)),
                             origin='lower', cmap='terrain', alpha=0.9)
-        contours = ax.contour(grid_x, grid_y, np.where(mascara_valida, grid_z, np.nan),
-                              levels=num_curvas, colors='black', linewidths=0.5)
-        ax.clabel(contours, inline=True, fontsize=8)
-        plt.colorbar(heatmap, ax=ax, label="Altitud (m)")
 
+        legend_elements = []
+
+        if num_curvas > 0:
+            curva_color = 'black'
+            curva_alpha = 0.8
+            curva_linewidth = 0.8
+            curva_label = "Curvas de nivel (zonas relevantes)"
+
+            curvas_z = np.where(mascara_valida & (mascara_pendiente | (pendiente > 0.00001)), grid_z, np.nan)
+            contours = ax.contour(grid_x, grid_y, curvas_z,
+                                  levels=num_curvas,
+                                  colors=curva_color,
+                                  linewidths=curva_linewidth,
+                                  alpha=curva_alpha)
+            ax.clabel(contours, inline=True, fontsize=8, fmt="%.0f")
+            legend_elements.append(Line2D([0], [0], color=curva_color, lw=1, label=curva_label))
+
+        plt.colorbar(heatmap, ax=ax, label="Altitud (m)")
         ax.set_title(f"Mapa de Elevación Interpolado\nUbicación: {ubicacion}\nÁrea aproximada: {area_ha:.2f} ha", fontsize=12)
         ax.set_xlabel("Longitud (°)")
         ax.set_ylabel("Latitud (°)")
         ax.grid(True, which='both', linestyle='--', linewidth=0.5, alpha=0.6)
 
         escala_m = 100
-        legend_elements = [
-            Line2D([0], [0], color='black', lw=1, label='Curvas de nivel'),
-            Line2D([0], [0], color='black', lw=2, label=f'Escala: {escala_m} m'),
-            Line2D([0], [0], color='none', label=f'Área: {area_ha:.2f} ha'),
-        ]
+        legend_elements.append(Line2D([0], [0], color='black', lw=2, label=f'Escala: {escala_m} m'))
+        legend_elements.append(Line2D([0], [0], color='none', label=f'Área: {area_ha:.2f} ha'))
         ax.legend(handles=legend_elements, loc='lower left', fontsize=8, frameon=True)
 
         ax.annotate('N', xy=(0.05, 0.95), xytext=(0.05, 0.85),
