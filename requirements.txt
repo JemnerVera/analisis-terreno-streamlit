@@ -9,3 +9,4 @@ geojson>=3.0.1
 shapely>=2.0
 gpxpy>=1.5
 geopandas>=0.14
+plotly>=5.18
