@@ -4,7 +4,7 @@ Esta aplicación web permite generar mapas de calor interpolados y comparar perf
 
 ## ¿Cómo usar la app?
 
-1. Abre la app en línea: [https://analisis-terreno.streamlit.app](https://analisis-terreno.streamlit.app) *(reemplaza con tu URL real)*
+1. Abre la app en línea: [https://analisis-terreno.streamlit.app](https://analisis-terreno.streamlit.app) 
 2. Sube uno o más archivos de ruta en formato `.kml`, `.gpx` o `.geojson`
 3. Elige entre dos modos:
    - **Generar mapa de calor**: visualiza la elevación interpolada con curvas de nivel
@@ -28,5 +28,6 @@ Al guardar tu ruta como archivo `.kml`, elige una de estas opciones:
 ## Licencia
 
 Este proyecto es de uso libre para fines educativos y de análisis. Puedes adaptarlo según tus necesidades.
+
 
 ---
